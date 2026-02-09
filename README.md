@@ -1,1 +1,1 @@
-# sonarrush123
+# sonar-rush

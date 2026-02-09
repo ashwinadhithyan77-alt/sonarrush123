@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Sonar Rush">
+  <title>Sonar Rush - Mobile Game</title>
+  
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <style>
+    * {
+      -webkit-tap-highlight-color: transparent;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+    
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      position: fixed;
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+    }
+    
+    #root {
+      width: 100%;
+      height: 100%;
+      overflow: auto;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    function SonarRushMobile() {
+      const [gameStarted, setGameStarted] = useState(false);
+      const [level, setLevel] = useState(1);
+      const [batPos, setBatPos] = useState({ x: 50, y: 50 });
+      const [echoActive, setEchoActive] = useState(false);
+      const [echoRadius, setEchoRadius] = useState(0);
+      const [gameWon, setGameWon] = useState(false);
+      const [gameOver, setGameOver] = useState(false);
+      const [keys, setKeys] = useState({});
+      const [moves, setMoves] = useState(0);
+      const [enemies, setEnemies] = useState([]);
+      const [deathCount, setDeathCount] = useState(0);
+      const [touchDirection, setTouchDirection] = useState({ x: 0, y: 0 });
+      
+      const canvasRef = useRef(null);
+      const animationRef = useRef();
+      const keysRef = useRef({});
+      const enemiesRef = useRef([]);
+      const audioContextRef = useRef(null);
+      const lastMoveSoundTime = useRef(0);
+      const joystickRef = useRef(null);
+      const joystickActive = useRef(false);
+
+      useEffect(() => {
+        // Initialize audio context on first user interaction
+        const initAudio = () => {
+          if (!audioContextRef.current) {
+            audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
+          }
+        };
+        document.addEventListener('touchstart', initAudio, { once: true });
+        document.addEventListener('click', initAudio, { once: true });
+      }, []);
+
+      const playEchoSound = () => {
+        if (!audioContextRef.current) return;
+        const ctx = audioContextRef.current;
+        const oscillator = ctx.createOscillator();
+        const gainNode = ctx.createGain();
+        
+        oscillator.connect(gainNode);
+        gainNode.connect(ctx.destination);
+        
+        oscillator.frequency.setValueAtTime(800, ctx.currentTime);
+        oscillator.frequency.exponentialRampToValueAtTime(200, ctx.currentTime + 0.3);
+        
+        gainNode.gain.setValueAtTime(0.3, ctx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
+        
+        oscillator.start(ctx.currentTime);
+        oscillator.stop(ctx.currentTime + 0.3);
+      };
+
+      const playHitSound = () => {
+        if (!audioContextRef.current) return;
+        const ctx = audioContextRef.current;
+        const oscillator = ctx.createOscillator();
+        const gainNode = ctx.createGain();
+        
+        oscillator.connect(gainNode);
+        gainNode.connect(ctx.destination);
+        
+        oscillator.type = 'sawtooth';
+        oscillator.frequency.setValueAtTime(100, ctx.currentTime);
+        oscillator.frequency.exponentialRampToValueAtTime(50, ctx.currentTime + 0.2);
+        
+        gainNode.gain.setValueAtTime(0.5, ctx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2);
+        
+        oscillator.start(ctx.currentTime);
+        oscillator.stop(ctx.currentTime + 0.2);
+      };
+
+      const playMoveSound = () => {
+        if (!audioContextRef.current) return;
+        const ctx = audioContextRef.current;
+        const oscillator = ctx.createOscillator();
+        const gainNode = ctx.createGain();
+        
+        oscillator.connect(gainNode);
+        gainNode.connect(ctx.destination);
+        
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(150, ctx.currentTime);
+        
+        gainNode.gain.setValueAtTime(0.05, ctx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.05);
+        
+        oscillator.start(ctx.currentTime);
+        oscillator.stop(ctx.currentTime + 0.05);
+      };
+
+      const playExitSound = () => {
+        if (!audioContextRef.current) return;
+        const ctx = audioContextRef.current;
+        
+        [523.25, 659.25, 783.99].forEach((freq, i) => {
+          const oscillator = ctx.createOscillator();
+          const gainNode = ctx.createGain();
+          
+          oscillator.connect(gainNode);
+          gainNode.connect(ctx.destination);
+          
+          oscillator.frequency.setValueAtTime(freq, ctx.currentTime);
+          
+          gainNode.gain.setValueAtTime(0.2, ctx.currentTime + i * 0.1);
+          gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5 + i * 0.1);
+          
+          oscillator.start(ctx.currentTime + i * 0.1);
+          oscillator.stop(ctx.currentTime + 0.5 + i * 0.1);
+        });
+      };
+
+      const tips = [
+        "💡 Use echo pulses frequently to track enemy movements",
+        "💡 Wait for enemies to move away before rushing through",
+        "💡 Study enemy patrol patterns - they're predictable!",
+        "💡 Batman is faster than enemies - use your speed advantage",
+        "💡 The exit always has a faint blue glow - look for it!",
+        "💡 Plan your route during echo pulses, then move quickly",
+        "💡 Enemies can't see you - only touch will catch you",
+        "💡 Corner enemies have shorter patrol routes - easier to avoid",
+        "💡 Send echo pulses while moving to save time",
+        "💡 Hug the walls to navigate tight spaces safely"
+      ];
+
+      const motivationalQuotes = [
+        "🦇 \"It's not who I am underneath, but what I do that defines me.\"",
+        "💪 \"Why do we fall? So we can learn to pick ourselves up.\"",
+        "⚡ \"A hero can be anyone.\"",
+        "🌟 \"The night is darkest just before the dawn.\"",
+        "🔥 \"You either die a hero, or live long enough to master this level!\"",
+        "✨ \"I am vengeance. I am the night. I am... trying my best!\"",
+        "💎 \"Sometimes it's only madness that makes us what we are.\"",
+        "🎯 \"Embrace your fear. Use it.\"",
+        "⭐ \"The cape and cowl weren't perfect at first either!\"",
+        "🚀 \"Every Batman started somewhere. You're leveling up!\""
+      ];
+
+      const levels = {
+        1: {
+          obstacles: [
+            { x: 200, y: 100, width: 100, height: 300 },
+            { x: 400, y: 200, width: 100, height: 200 },
+          ],
+          exit: { x: 550, y: 380, size: 40 },
+          start: { x: 50, y: 50 },
+          enemyPatrols: [
+            { path: [{x: 150, y: 200}, {x: 350, y: 200}], speed: 1 },
+            { path: [{x: 300, y: 100}, {x: 300, y: 350}], speed: 0.8 }
+          ]
+        },
+        2: {
+          obstacles: [
+            { x: 150, y: 50, width: 80, height: 250 },
+            { x: 350, y: 150, width: 80, height: 250 },
+            { x: 250, y: 300, width: 200, height: 80 },
+          ],
+          exit: { x: 550, y: 80, size: 40 },
+          start: { x: 50, y: 350 },
+          enemyPatrols: [
+            { path: [{x: 100, y: 150}, {x: 300, y: 150}], speed: 1.2 },
+            { path: [{x: 450, y: 100}, {x: 450, y: 250}], speed: 1 },
+            { path: [{x: 200, y: 250}, {x: 450, y: 350}], speed: 0.9 }
+          ]
+        },
+        3: {
+          obstacles: [
+            { x: 100, y: 100, width: 50, height: 300 },
+            { x: 250, y: 50, width: 50, height: 200 },
+            { x: 400, y: 150, width: 50, height: 250 },
+            { x: 200, y: 300, width: 150, height: 50 },
+          ],
+          exit: { x: 550, y: 50, size: 40 },
+          start: { x: 50, y: 380 },
+          enemyPatrols: [
+            { path: [{x: 180, y: 150}, {x: 350, y: 150}], speed: 1.3 },
+            { path: [{x: 180, y: 280}, {x: 350, y: 280}], speed: 1.1 },
+            { path: [{x: 480, y: 100}, {x: 480, y: 350}], speed: 1 },
+            { path: [{x: 50, y: 200}, {x: 150, y: 200}], speed: 0.8 }
+          ]
+        },
+        4: {
+          obstacles: [
+            { x: 120, y: 80, width: 60, height: 150 },
+            { x: 120, y: 270, width: 60, height: 150 },
+            { x: 280, y: 150, width: 60, height: 200 },
+            { x: 440, y: 80, width: 60, height: 150 },
+            { x: 440, y: 270, width: 60, height: 150 },
+          ],
+          exit: { x: 550, y: 230, size: 40 },
+          start: { x: 50, y: 230 },
+          enemyPatrols: [
+            { path: [{x: 80, y: 180}, {x: 250, y: 180}], speed: 1.4 },
+            { path: [{x: 200, y: 100}, {x: 200, y: 250}], speed: 1.2 },
+            { path: [{x: 350, y: 100}, {x: 500, y: 100}], speed: 1.1 },
+            { path: [{x: 350, y: 300}, {x: 500, y: 300}], speed: 1 },
+            { path: [{x: 380, y: 200}, {x: 500, y: 300}], speed: 0.9 }
+          ]
+        },
+        5: {
+          obstacles: [
+            { x: 80, y: 50, width: 50, height: 120 },
+            { x: 80, y: 230, width: 50, height: 120 },
+            { x: 200, y: 100, width: 50, height: 200 },
+            { x: 320, y: 50, width: 50, height: 120 },
+            { x: 320, y: 230, width: 50, height: 120 },
+            { x: 440, y: 100, width: 50, height: 200 },
+          ],
+          exit: { x: 550, y: 200, size: 35 },
+          start: { x: 30, y: 200 },
+          enemyPatrols: [
+            { path: [{x: 150, y: 150}, {x: 280, y: 150}], speed: 1.5 },
+            { path: [{x: 150, y: 250}, {x: 280, y: 250}], speed: 1.3 },
+            { path: [{x: 380, y: 150}, {x: 510, y: 150}], speed: 1.4 },
+            { path: [{x: 380, y: 250}, {x: 510, y: 250}], speed: 1.2 },
+            { path: [{x: 270, y: 80}, {x: 270, y: 320}], speed: 1.1 },
+            { path: [{x: 140, y: 80}, {x: 140, y: 320}], speed: 1 }
+          ]
+        },
+        6: {
+          obstacles: [
+            { x: 100, y: 60, width: 40, height: 140 },
+            { x: 100, y: 240, width: 40, height: 140 },
+            { x: 220, y: 120, width: 40, height: 160 },
+            { x: 340, y: 60, width: 40, height: 140 },
+            { x: 340, y: 240, width: 40, height: 140 },
+            { x: 460, y: 120, width: 40, height: 160 },
+          ],
+          exit: { x: 550, y: 370, size: 30 },
+          start: { x: 30, y: 30 },
+          enemyPatrols: [
+            { path: [{x: 60, y: 100}, {x: 180, y: 100}], speed: 1.6 },
+            { path: [{x: 60, y: 300}, {x: 180, y: 300}], speed: 1.5 },
+            { path: [{x: 180, y: 200}, {x: 300, y: 200}], speed: 1.7 },
+            { path: [{x: 300, y: 100}, {x: 420, y: 100}], speed: 1.6 },
+            { path: [{x: 300, y: 300}, {x: 420, y: 300}], speed: 1.5 },
+            { path: [{x: 420, y: 200}, {x: 540, y: 200}], speed: 1.4 },
+            { path: [{x: 280, y: 60}, {x: 280, y: 340}], speed: 1.3 }
+          ]
+        },
+        7: {
+          obstacles: [
+            { x: 90, y: 70, width: 35, height: 100 },
+            { x: 90, y: 230, width: 35, height: 100 },
+            { x: 180, y: 50, width: 35, height: 130 },
+            { x: 180, y: 220, width: 35, height: 130 },
+            { x: 270, y: 90, width: 35, height: 220 },
+            { x: 360, y: 50, width: 35, height: 130 },
+            { x: 360, y: 220, width: 35, height: 130 },
+            { x: 450, y: 70, width: 35, height: 100 },
+            { x: 450, y: 230, width: 35, height: 100 },
+          ],
+          exit: { x: 550, y: 200, size: 30 },
+          start: { x: 30, y: 200 },
+          enemyPatrols: [
+            { path: [{x: 130, y: 130}, {x: 240, y: 130}], speed: 1.8 },
+            { path: [{x: 130, y: 270}, {x: 240, y: 270}], speed: 1.7 },
+            { path: [{x: 310, y: 70}, {x: 310, y: 330}], speed: 1.6 },
+            { path: [{x: 320, y: 130}, {x: 430, y: 130}], speed: 1.8 },
+            { path: [{x: 320, y: 270}, {x: 430, y: 270}], speed: 1.7 },
+            { path: [{x: 490, y: 130}, {x: 560, y: 130}], speed: 1.5 },
+            { path: [{x: 490, y: 270}, {x: 560, y: 270}], speed: 1.5 },
+            { path: [{x: 60, y: 100}, {x: 60, y: 300}], speed: 1.4 }
+          ]
+        },
+        8: {
+          obstacles: [
+            { x: 80, y: 60, width: 30, height: 90 },
+            { x: 80, y: 250, width: 30, height: 90 },
+            { x: 150, y: 40, width: 30, height: 110 },
+            { x: 150, y: 250, width: 30, height: 110 },
+            { x: 220, y: 80, width: 30, height: 240 },
+            { x: 290, y: 40, width: 30, height: 110 },
+            { x: 290, y: 250, width: 30, height: 110 },
+            { x: 360, y: 80, width: 30, height: 240 },
+            { x: 430, y: 40, width: 30, height: 110 },
+            { x: 430, y: 250, width: 30, height: 110 },
+            { x: 500, y: 60, width: 30, height: 90 },
+            { x: 500, y: 250, width: 30, height: 90 },
+          ],
+          exit: { x: 570, y: 200, size: 25 },
+          start: { x: 20, y: 200 },
+          enemyPatrols: [
+            { path: [{x: 110, y: 110}, {x: 190, y: 110}], speed: 2 },
+            { path: [{x: 110, y: 290}, {x: 190, y: 290}], speed: 1.9 },
+            { path: [{x: 250, y: 60}, {x: 250, y: 340}], speed: 1.8 },
+            { path: [{x: 250, y: 110}, {x: 330, y: 110}], speed: 2 },
+            { path: [{x: 250, y: 290}, {x: 330, y: 290}], speed: 1.9 },
+            { path: [{x: 390, y: 60}, {x: 390, y: 340}], speed: 1.8 },
+            { path: [{x: 390, y: 110}, {x: 470, y: 110}], speed: 2 },
+            { path: [{x: 390, y: 290}, {x: 470, y: 290}], speed: 1.9 },
+            { path: [{x: 530, y: 110}, {x: 530, y: 290}], speed: 1.7 },
+            { path: [{x: 50, y: 120}, {x: 50, y: 280}], speed: 1.6 }
+          ]
+        }
+      };
+
+      const currentLevel = levels[level];
+
+      useEffect(() => {
+        if (gameStarted && currentLevel) {
+          const initialEnemies = currentLevel.enemyPatrols.map((patrol, index) => ({
+            id: index,
+            x: patrol.path[0].x,
+            y: patrol.path[0].y,
+            patrol: patrol.path,
+            speed: patrol.speed,
+            currentTarget: 0,
+            direction: 1
+          }));
+          setEnemies(initialEnemies);
+          enemiesRef.current = initialEnemies;
+        }
+      }, [gameStarted, level]);
+
+      useEffect(() => {
+        if (echoActive) {
+          const interval = setInterval(() => {
+            setEchoRadius(r => {
+              if (r >= 300) {
+                setEchoActive(false);
+                return 0;
+              }
+              return r + 8;
+            });
+          }, 16);
+          return () => clearInterval(interval);
+        }
+      }, [echoActive]);
+
+      useEffect(() => {
+        if (!gameStarted || gameWon || gameOver) return;
+
+        const gameLoop = () => {
+          const canvas = canvasRef.current;
+          if (!canvas) return;
+
+          let newX = batPos.x;
+          let newY = batPos.y;
+          
+          const speed = 3;
+          let moved = false;
+
+          const moveLeft = touchDirection.x < -0.3;
+          const moveRight = touchDirection.x > 0.3;
+          const moveUp = touchDirection.y < -0.3;
+          const moveDown = touchDirection.y > 0.3;
+
+          if (moveLeft) { newX -= speed; moved = true; }
+          if (moveRight) { newX += speed; moved = true; }
+          if (moveUp) { newY -= speed; moved = true; }
+          if (moveDown) { newY += speed; moved = true; }
+
+          if (moved) {
+            const now = Date.now();
+            if (now - lastMoveSoundTime.current > 100) {
+              playMoveSound();
+              lastMoveSoundTime.current = now;
+            }
+          }
+
+          newX = Math.max(15, Math.min(585, newX));
+          newY = Math.max(15, Math.min(385, newY));
+
+          let hitObstacle = false;
+          currentLevel.obstacles.forEach(obs => {
+            if (newX + 15 > obs.x && newX - 15 < obs.x + obs.width &&
+                newY + 15 > obs.y && newY - 15 < obs.y + obs.height) {
+              hitObstacle = true;
+            }
+          });
+
+          if (!hitObstacle) {
+            setBatPos({ x: newX, y: newY });
+          }
+
+          const updatedEnemies = enemiesRef.current.map(enemy => {
+            const target = enemy.patrol[enemy.currentTarget];
+            const dx = target.x - enemy.x;
+            const dy = target.y - enemy.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+
+            if (dist < enemy.speed) {
+              enemy.currentTarget = (enemy.currentTarget + enemy.direction + enemy.patrol.length) % enemy.patrol.length;
+              if (enemy.currentTarget === enemy.patrol.length - 1 || enemy.currentTarget === 0) {
+                enemy.direction *= -1;
+              }
+              return enemy;
+            }
+
+            enemy.x += (dx / dist) * enemy.speed;
+            enemy.y += (dy / dist) * enemy.speed;
+            return enemy;
+          });
+
+          enemiesRef.current = updatedEnemies;
+          setEnemies(updatedEnemies);
+
+          updatedEnemies.forEach(enemy => {
+            const dist = Math.sqrt((enemy.x - newX) ** 2 + (enemy.y - newY) ** 2);
+            if (dist < 25) {
+              playHitSound();
+              setGameOver(true);
+              setDeathCount(d => d + 1);
+            }
+          });
+
+          const exitDist = Math.sqrt(
+            (newX - currentLevel.exit.x) ** 2 + (newY - currentLevel.exit.y) ** 2
+          );
+          if (exitDist < currentLevel.exit.size / 2) {
+            playExitSound();
+            setGameWon(true);
+          }
+
+          animationRef.current = requestAnimationFrame(gameLoop);
+        };
+
+        animationRef.current = requestAnimationFrame(gameLoop);
+        return () => cancelAnimationFrame(animationRef.current);
+      }, [gameStarted, batPos, gameWon, gameOver, currentLevel, touchDirection]);
+
+      useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, 600, 400);
+
+        const exit = currentLevel.exit;
+        const gradient = ctx.createRadialGradient(exit.x, exit.y, 0, exit.x, exit.y, exit.size);
+        gradient.addColorStop(0, 'rgba(34, 197, 94, 0.3)');
+        gradient.addColorStop(1, 'rgba(34, 197, 94, 0)');
+        ctx.fillStyle = gradient;
+        ctx.fillRect(exit.x - exit.size, exit.y - exit.size, exit.size * 2, exit.size * 2);
+
+        if (echoActive && echoRadius > 0) {
+          currentLevel.obstacles.forEach(obs => {
+            const obsCenterX = obs.x + obs.width / 2;
+            const obsCenterY = obs.y + obs.height / 2;
+            const dist = Math.sqrt((obsCenterX - batPos.x) ** 2 + (obsCenterY - batPos.y) ** 2);
+            
+            if (dist <= echoRadius) {
+              ctx.fillStyle = `rgba(100, 100, 100, ${0.8 - dist / echoRadius * 0.5})`;
+              ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+            }
+          });
+
+          enemies.forEach(enemy => {
+            const dist = Math.sqrt((enemy.x - batPos.x) ** 2 + (enemy.y - batPos.y) ** 2);
+            if (dist <= echoRadius) {
+              const alpha = 0.9 - dist / echoRadius * 0.6;
+              ctx.fillStyle = `rgba(239, 68, 68, ${alpha})`;
+              ctx.beginPath();
+              ctx.arc(enemy.x, enemy.y, 12, 0, Math.PI * 2);
+              ctx.fill();
+              
+              ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+              ctx.fillRect(enemy.x - 3, enemy.y - 8, 2, 3);
+              ctx.fillRect(enemy.x + 1, enemy.y - 8, 2, 3);
+            }
+          });
+
+          ctx.strokeStyle = `rgba(59, 130, 246, ${1 - echoRadius / 300})`;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(batPos.x, batPos.y, echoRadius, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+
+        ctx.save();
+        ctx.translate(batPos.x, batPos.y);
+        ctx.scale(1.5, 1.5);
+        
+        ctx.fillStyle = '#1f2937';
+        ctx.beginPath();
+        ctx.arc(0, 0, 8, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#374151';
+        ctx.beginPath();
+        ctx.moveTo(-12, -4);
+        ctx.lineTo(-8, -2);
+        ctx.lineTo(-6, 2);
+        ctx.lineTo(-8, 4);
+        ctx.lineTo(-14, 0);
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.moveTo(12, -4);
+        ctx.lineTo(8, -2);
+        ctx.lineTo(6, 2);
+        ctx.lineTo(8, 4);
+        ctx.lineTo(14, 0);
+        ctx.fill();
+
+        ctx.fillStyle = 'rgba(239, 68, 68, 0.5)';
+        ctx.beginPath();
+        ctx.arc(-1.5, -8, 1.5, 0, Math.PI * 2);
+        ctx.arc(1.5, -8, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 0.5;
+        ctx.beginPath();
+        ctx.moveTo(-0.5, -6);
+        ctx.lineTo(-0.5, -5);
+        ctx.moveTo(0.5, -6);
+        ctx.lineTo(0.5, -5);
+        ctx.stroke();
+        
+        ctx.restore();
+      }, [batPos, echoActive, echoRadius, currentLevel, enemies]);
+
+      const handleJoystickStart = (e) => {
+        e.preventDefault();
+        joystickActive.current = true;
+      };
+
+      const handleJoystickMove = (e) => {
+        if (!joystickActive.current) return;
+        e.preventDefault();
+        
+        const touch = e.touches[0];
+        const rect = joystickRef.current.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+        
+        const deltaX = touch.clientX - centerX;
+        const deltaY = touch.clientY - centerY;
+        
+        const maxDistance = 40;
+        const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+        
+        if (distance > 0) {
+          const normalizedX = deltaX / Math.min(distance, maxDistance);
+          const normalizedY = deltaY / Math.min(distance, maxDistance);
+          
+          setTouchDirection({ x: normalizedX, y: normalizedY });
+        }
+      };
+
+      const handleJoystickEnd = (e) => {
+        e.preventDefault();
+        joystickActive.current = false;
+        setTouchDirection({ x: 0, y: 0 });
+      };
+
+      const handleEchoButton = () => {
+        if (gameStarted && !echoActive && !gameWon && !gameOver) {
+          setEchoActive(true);
+          setEchoRadius(0);
+          setMoves(m => m + 1);
+          playEchoSound();
+        }
+      };
+
+      const startGame = () => {
+        setGameStarted(true);
+        setGameWon(false);
+        setGameOver(false);
+        setMoves(0);
+        setBatPos(currentLevel.start);
+        setEchoActive(false);
+      };
+
+      const nextLevel = () => {
+        if (level < 8) {
+          setLevel(l => l + 1);
+          setGameStarted(false);
+          setGameWon(false);
+          setGameOver(false);
+          setDeathCount(0);
+        }
+      };
+
+      const resetLevel = () => {
+        setGameStarted(false);
+        setGameWon(false);
+        setGameOver(false);
+      };
+
+      return (
+        <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-gray-950 via-yellow-950 to-black p-2">
+          <div className="text-center w-full max-w-2xl">
+            <h1 className="text-3xl sm:text-5xl font-bold text-yellow-400 mb-2 flex items-center justify-center gap-2">
+              <span className="text-4xl sm:text-6xl">🦇</span>
+              Sonar Rush
+              <span className="text-4xl sm:text-6xl">🦇</span>
+            </h1>
+            <p className="text-gray-300 mb-1 text-xs sm:text-sm italic">Navigate the Dark with Sound Waves</p>
+            <p className="text-gray-500 mb-4 text-xs italic">Created by ASHWIN</p>
+
+            {!gameStarted ? (
+              <div className="mt-4">
+                <div className="bg-gray-800 bg-opacity-50 p-4 sm:p-6 rounded-lg mb-4 mx-auto">
+                  <h2 className="text-xl sm:text-2xl font-bold text-cyan-400 mb-3">
+                    Level {level} / 8
+                    {level <= 2 && <span className="text-green-400 text-base sm:text-lg ml-2">⭐ Easy</span>}
+                    {level >= 3 && level <= 5 && <span className="text-yellow-400 text-base sm:text-lg ml-2">⭐⭐ Medium</span>}
+                    {level >= 6 && level <= 7 && <span className="text-orange-400 text-base sm:text-lg ml-2">⭐⭐⭐ Hard</span>}
+                    {level === 8 && <span className="text-red-400 text-base sm:text-lg ml-2">⭐⭐⭐⭐ EXTREME</span>}
+                  </h2>
+                  <div className="text-gray-300 text-left space-y-1 text-sm sm:text-base">
+                    <p>🕹️ <strong>Joystick</strong> - Move Batman</p>
+                    <p>🔊 <strong>Echo Button</strong> - Send Sound Pulse</p>
+                    <p>🎯 Find the green EXIT portal</p>
+                    <p>⚠️ Avoid Joker's henchmen</p>
+                  </div>
+                </div>
+                <button
+                  onClick={startGame}
+                  className="bg-yellow-500 hover:bg-yellow-600 text-black font-bold py-3 sm:py-4 px-6 sm:px-8 rounded-lg text-lg sm:text-xl transition-all transform active:scale-95 shadow-lg shadow-yellow-500/50 w-full sm:w-auto"
+                >
+                  Start Level {level}
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="mb-3 flex justify-center gap-4 text-base sm:text-xl">
+                  <span className="font-bold text-yellow-400">Level {level}</span>
+                  <span className="font-bold text-yellow-300">Pulses: {moves}</span>
+                </div>
+
+                <div className="relative inline-block w-full max-w-xl">
+                  <canvas
+                    ref={canvasRef}
+                    width={600}
+                    height={400}
+                    className="border-4 border-yellow-500 rounded-lg bg-gray-950 shadow-lg shadow-yellow-500/30 w-full h-auto"
+                    style={{ touchAction: 'none' }}
+                  />
+                  
+                  {gameWon && (
+                    <div className="absolute inset-0 bg-black bg-opacity-80 flex items-center justify-center rounded-lg">
+                      <div className="text-center p-4">
+                        <h2 className="text-2xl sm:text-4xl font-bold text-green-400 mb-3">Level Complete! 🎉</h2>
+                        <p className="text-xl sm:text-2xl text-white mb-2">Pulses: {moves}</p>
+                        <p className="text-gray-400 mb-4 text-sm sm:text-base">
+                          {moves <= 5 ? "Perfect! 🌟" : moves <= 10 ? "Great! 👍" : "Keep practicing! 💪"}
+                        </p>
+                        <div className="space-y-2 sm:space-y-0 sm:space-x-4">
+                          <button
+                            onClick={resetLevel}
+                            className="bg-gray-700 hover:bg-gray-600 text-yellow-400 font-bold py-2 px-4 sm:py-3 sm:px-6 rounded-lg transition-all border-2 border-yellow-500 w-full sm:w-auto"
+                          >
+                            Retry
+                          </button>
+                          {level < 8 && (
+                            <button
+                              onClick={nextLevel}
+                              className="bg-yellow-500 hover:bg-yellow-600 text-black font-bold py-2 px-4 sm:py-3 sm:px-6 rounded-lg transition-all shadow-lg shadow-yellow-500/50 w-full sm:w-auto"
+                            >
+                              Next →
+                            </button>
+                          )}
+                          {level === 8 && (
+                            <button
+                              onClick={() => { setLevel(1); resetLevel(); }}
+                              className="bg-yellow-500 hover:bg-yellow-600 text-black font-bold py-2 px-4 sm:py-3 sm:px-6 rounded-lg transition-all shadow-lg shadow-yellow-500/50 w-full sm:w-auto"
+                            >
+                              🎉 Play Again!
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {gameOver && (
+                    <div className="absolute inset-0 bg-black bg-opacity-90 flex items-center justify-center rounded-lg">
+                      <div className="text-center max-w-md px-4">
+                        <h2 className="text-3xl sm:text-5xl font-bold text-red-500 mb-3">💀 CAUGHT! 💀</h2>
+                        <p className="text-xl sm:text-2xl text-purple-400 mb-2">Henchman got you!</p>
+                        <p className="text-gray-500 text-xs sm:text-sm mb-3">Deaths: {deathCount}</p>
+                        
+                        {deathCount >= 5 && (
+                          <div className="bg-blue-900 bg-opacity-40 border-2 border-blue-400 rounded-lg p-3 mb-3 text-sm sm:text-base">
+                            <p className="text-yellow-300 font-bold">
+                              {tips[Math.min(deathCount - 5, tips.length - 1)]}
+                            </p>
+                          </div>
+                        )}
+                        
+                        {deathCount >= 3 && (
+                          <div className="bg-purple-900 bg-opacity-30 rounded-lg p-2 mb-3 text-xs sm:text-sm">
+                            <p className="text-cyan-300 italic">
+                              {motivationalQuotes[deathCount % motivationalQuotes.length]}
+                            </p>
+                          </div>
+                        )}
+                        
+                        <button
+                          onClick={resetLevel}
+                          className="bg-yellow-500 hover:bg-yellow-600 text-black font-bold py-2 px-6 sm:py-3 sm:px-8 rounded-lg transition-all shadow-lg shadow-yellow-500/50 w-full sm:w-auto"
+                        >
+                          {deathCount >= 10 ? "🔥 Try Again!" : "Try Again"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-6 flex justify-center items-center gap-6 sm:gap-12">
+                  <div 
+                    ref={joystickRef}
+                    onTouchStart={handleJoystickStart}
+                    onTouchMove={handleJoystickMove}
+                    onTouchEnd={handleJoystickEnd}
+                    className="relative w-32 h-32 bg-gray-800 bg-opacity-50 rounded-full border-4 border-yellow-500/30 flex items-center justify-center"
+                    style={{ touchAction: 'none' }}
+                  >
+                    <div 
+                      className="w-12 h-12 bg-yellow-500 rounded-full shadow-lg transition-transform"
+                      style={{
+                        transform: `translate(${touchDirection.x * 40}px, ${touchDirection.y * 40}px)`
+                      }}
+                    />
+                    <div className="absolute text-yellow-400 text-xs top-1">🕹️</div>
+                  </div>
+
+                  <button
+                    onTouchStart={handleEchoButton}
+                    onClick={handleEchoButton}
+                    disabled={echoActive}
+                    className={`w-32 h-32 rounded-full font-bold text-2xl transition-all shadow-lg ${
+                      echoActive 
+                        ? 'bg-gray-600 text-gray-400 cursor-not-allowed' 
+                        : 'bg-cyan-500 hover:bg-cyan-600 text-white active:scale-95 shadow-cyan-500/50'
+                    }`}
+                    style={{ touchAction: 'none' }}
+                  >
+                    🔊<br/>
+                    <span className="text-sm">ECHO</span>
+                  </button>
+                </div>
+
+                <div className="mt-4 text-gray-400 max-w-md mx-auto text-xs sm:text-sm px-4">
+                  <p>💡 Use echo pulses to reveal enemies and obstacles!</p>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.render(<SonarRushMobile />, document.getElementById('root'));
+  </script>
+</body>
+</html>
